@@ -1,0 +1,98 @@
+{
+  "name": "justinpriday.containers",
+  "version": "0.6.0",
+  "displayName": "Containers",
+  "description": "Worktree-bound container controls and consoles for Docker Engine and Docker Compose.",
+  "tagline": "Docker Engine and Compose controls for every Daintree worktree.",
+  "category": "workspace",
+  "main": "dist/index.js",
+  "engines": {
+    "daintree": ">=0.28.0"
+  },
+  "capabilities": ["clipboard:write"],
+  "contributes": {
+    "panels": [
+      {
+        "id": "console",
+        "name": "Container Console",
+        "iconId": "terminal",
+        "color": "var(--theme-category-blue)",
+        "showInPalette": false
+      }
+    ],
+    "views": [
+      {
+        "id": "console",
+        "componentPath": "dist/panel-0.6.0.js",
+        "location": "panel",
+        "iconId": "terminal"
+      }
+    ],
+    "commands": [
+      {
+        "id": "open",
+        "title": "Containers: Open Console",
+        "description": "Open a container console permanently bound to a selected worktree and its configured Docker project.",
+        "category": "Containers",
+        "kind": "command",
+        "danger": "safe",
+        "keywords": ["docker", "container", "compose", "worktree"]
+      },
+      {
+        "id": "refresh",
+        "title": "Containers: Refresh Project",
+        "description": "Refresh Docker daemon and Compose container status for the active worktree.",
+        "category": "Containers",
+        "kind": "command",
+        "danger": "safe",
+        "keywords": ["docker", "compose", "refresh", "status"]
+      },
+      {
+        "id": "start",
+        "title": "Containers: Start Project Containers",
+        "description": "Start stopped Compose containers associated with the active worktree.",
+        "category": "Containers",
+        "kind": "command",
+        "danger": "confirm",
+        "keywords": ["docker", "compose", "start"]
+      },
+      {
+        "id": "stop",
+        "title": "Containers: Stop Project Containers",
+        "description": "Stop running Compose containers associated with the active worktree.",
+        "category": "Containers",
+        "kind": "command",
+        "danger": "confirm",
+        "keywords": ["docker", "compose", "stop"]
+      },
+      {
+        "id": "restart",
+        "title": "Containers: Restart Project Containers",
+        "description": "Restart Compose containers associated with the active worktree.",
+        "category": "Containers",
+        "kind": "command",
+        "danger": "confirm",
+        "keywords": ["docker", "compose", "restart"]
+      }
+    ],
+    "toolbarButtons": [
+      {
+        "id": "open-console",
+        "label": "Open Container Console",
+        "iconId": "terminal",
+        "actionId": "justinpriday.containers.open",
+        "priority": 3
+      }
+    ],
+    "settings": [
+      {
+        "id": "dockerSocketPath",
+        "type": "path",
+        "scope": "user",
+        "label": "Docker socket",
+        "description": "Optional Unix socket override. Leave empty to discover Docker Desktop, Colima, Rancher Desktop, or /var/run/docker.sock automatically.",
+        "default": ""
+      }
+    ]
+  }
+}
