@@ -14,6 +14,7 @@
 /out/
 /tmp/
 /*.dntr
+/*.dntr.sha256
 *.tsbuildinfo
 
 # Test and analysis output

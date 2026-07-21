@@ -15,7 +15,7 @@
     "package": "npm run licenses && npm run build && node tools/package.mjs",
     "package:dry-run": "npm run licenses:check && node tools/package.mjs --dry-run --verbose",
     "version:set": "node tools/set-version.mjs",
-    "release:prepare": "npm run typecheck && npm test && npm run package && npm run validate",
+    "release:prepare": "npm run typecheck && npm test && npm run package && npm run validate && node tools/write-release-checksum.mjs",
     "release": "node tools/release.mjs",
     "stage:install": "npm run licenses:check && npm run build && node tools/stage-install-dir.mjs"
   },

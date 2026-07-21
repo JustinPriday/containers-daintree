@@ -92,6 +92,7 @@ const version = packageManifest.version;
 const tag = `v${version}`;
 const archive = `${pluginManifest.name}-${version}.dntr`;
 const archivePath = path.join(projectRoot, archive);
+const checksumPath = `${archivePath}.sha256`;
 const panelPaths = (pluginManifest.contributes?.views ?? []).map((view) => view.componentPath);
 if (panelPaths.some((componentPath) => componentPath?.includes("panel-") && !componentPath.includes(version))) {
   throw new Error("A versioned panel componentPath does not match the manifest version.");
@@ -102,6 +103,7 @@ capture("gh", ["auth", "status", "--hostname", "github.com"]);
 
 if (!skipChecks) run("npm", ["run", "release:prepare"]);
 await access(archivePath);
+await access(checksumPath);
 
 const tagCommit = tryCapture("git", ["rev-list", "-n", "1", tag]);
 const headCommit = capture("git", ["rev-parse", "HEAD"]);
@@ -121,6 +123,7 @@ const releaseArgs = [
   "create",
   tag,
   archivePath,
+  checksumPath,
   "--verify-tag",
   "--title",
   `Containers ${version}`,
@@ -133,6 +136,6 @@ else releaseArgs.push("--generate-notes");
 run("gh", releaseArgs);
 console.log(
   publish
-    ? `Published ${tag} with ${archive}`
-    : `Created draft ${tag} with ${archive}. Review it on GitHub, then publish it.`
+    ? `Published ${tag} with ${archive} and its checksum`
+    : `Created draft ${tag} with ${archive} and its checksum. Review it on GitHub, then publish it.`
 );
