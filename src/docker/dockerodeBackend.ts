@@ -3,7 +3,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
 import Docker from "dockerode";
-import { DockerLogLineDecoder, DockerMultiplexDecoder } from "./dockerLogParser.js";
+import {
+  DockerLogLineDecoder,
+  DockerMultiplexDecoder,
+} from "./dockerLogParser.js";
 import type {
   DockerBackend,
   DockerConnection,
@@ -39,7 +42,10 @@ interface ResolvedSocket {
 function defaultSocketCandidates(): Array<{ path: string; label: string }> {
   const home = homedir();
   return [
-    { path: path.join(home, ".docker/run/docker.sock"), label: "Docker Desktop" },
+    {
+      path: path.join(home, ".docker/run/docker.sock"),
+      label: "Docker Desktop",
+    },
     { path: "/var/run/docker.sock", label: "Default Docker socket" },
     { path: path.join(home, ".colima/default/docker.sock"), label: "Colima" },
     { path: path.join(home, ".colima/docker.sock"), label: "Colima (legacy)" },
@@ -55,7 +61,8 @@ function parseUnixDockerHost(value: string | undefined): string | null {
 
 function normalizeProjectPath(value: string): string {
   const normalized = path.normalize(value);
-  return normalized.length > path.parse(normalized).root.length && normalized.endsWith(path.sep)
+  return normalized.length > path.parse(normalized).root.length &&
+    normalized.endsWith(path.sep)
     ? normalized.slice(0, -1)
     : normalized;
 }
@@ -65,9 +72,16 @@ function healthFromStatus(status: string): string | null {
   return match?.[1]?.toLowerCase().replace("health: ", "") ?? null;
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
     timer.unref?.();
     promise.then(
       (value) => {
@@ -77,13 +91,15 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
       (error: unknown) => {
         clearTimeout(timer);
         reject(error);
-      }
+      },
     );
   });
 }
 
 export class DockerodeBackend implements DockerBackend {
-  private readonly options: Required<Omit<DockerodeBackendOptions, "getConfiguredSocket">> &
+  private readonly options: Required<
+    Omit<DockerodeBackendOptions, "getConfiguredSocket">
+  > &
     Pick<DockerodeBackendOptions, "getConfiguredSocket">;
   private client: Docker | null = null;
   private resolvedSocket: ResolvedSocket | null = null;
@@ -104,14 +120,17 @@ export class DockerodeBackend implements DockerBackend {
             return false;
           }
         }),
-      createClient: options.createClient ?? ((socketPath) => new Docker({ socketPath })),
+      createClient:
+        options.createClient ?? ((socketPath) => new Docker({ socketPath })),
       timeoutMs: options.timeoutMs ?? 4_000,
       now: options.now ?? (() => new Date()),
     };
   }
 
   private async discoverSocket(): Promise<ResolvedSocket | null> {
-    const configured = parseUnixDockerHost(await this.options.getConfiguredSocket?.());
+    const configured = parseUnixDockerHost(
+      await this.options.getConfiguredSocket?.(),
+    );
     if (configured && (await this.options.pathExists(configured))) {
       return { path: configured, label: "Configured Docker socket" };
     }
@@ -145,11 +164,15 @@ export class DockerodeBackend implements DockerBackend {
     }
 
     try {
-      await withTimeout(this.client.ping(), this.options.timeoutMs, "Docker ping");
+      await withTimeout(
+        this.client.ping(),
+        this.options.timeoutMs,
+        "Docker ping",
+      );
       const [version, info] = await withTimeout(
         Promise.all([this.client.version(), this.client.info()]),
         this.options.timeoutMs,
-        "Docker daemon information"
+        "Docker daemon information",
       );
       return {
         state: "ready",
@@ -178,19 +201,27 @@ export class DockerodeBackend implements DockerBackend {
     }
   }
 
-  private async listProjectContainers(projectPath: string): Promise<DockerContainer[]> {
+  private async listProjectContainers(
+    projectPath: string,
+  ): Promise<DockerContainer[]> {
     if (!this.client) return [];
     const expectedPath = normalizeProjectPath(projectPath);
     const containers = await withTimeout(
-      this.client.listContainers({ all: true, filters: { label: [COMPOSE_WORKING_DIR] } }),
+      this.client.listContainers({
+        all: true,
+        filters: { label: [COMPOSE_WORKING_DIR] },
+      }),
       this.options.timeoutMs,
-      "Docker container listing"
+      "Docker container listing",
     );
 
     return containers
       .filter((container) => {
         const workingDir = container.Labels?.[COMPOSE_WORKING_DIR];
-        return workingDir !== undefined && normalizeProjectPath(workingDir) === expectedPath;
+        return (
+          workingDir !== undefined &&
+          normalizeProjectPath(workingDir) === expectedPath
+        );
       })
       .map((container) => {
         const labels = container.Labels ?? {};
@@ -198,7 +229,9 @@ export class DockerodeBackend implements DockerBackend {
         return {
           id: container.Id,
           name: (container.Names?.[0] ?? "").replace(/^\//, ""),
-          serviceName: labels[COMPOSE_SERVICE] ?? (container.Names?.[0] ?? "").replace(/^\//, ""),
+          serviceName:
+            labels[COMPOSE_SERVICE] ??
+            (container.Names?.[0] ?? "").replace(/^\//, ""),
           image: container.Image,
           state: container.State,
           status,
@@ -207,12 +240,16 @@ export class DockerodeBackend implements DockerBackend {
           workingDir: labels[COMPOSE_WORKING_DIR] ?? "",
         };
       })
-      .sort((left, right) =>
-        left.serviceName.localeCompare(right.serviceName) || left.name.localeCompare(right.name)
+      .sort(
+        (left, right) =>
+          left.serviceName.localeCompare(right.serviceName) ||
+          left.name.localeCompare(right.name),
       );
   }
 
-  async getProjectSnapshot(projectPath: string): Promise<DockerProjectSnapshot> {
+  async getProjectSnapshot(
+    projectPath: string,
+  ): Promise<DockerProjectSnapshot> {
     const normalizedPath = normalizeProjectPath(projectPath);
     const connection = await this.getConnection();
     let containers: DockerContainer[] = [];
@@ -237,7 +274,13 @@ export class DockerodeBackend implements DockerBackend {
     return {
       projectPath: normalizedPath,
       connection,
-      composeProjects: [...new Set(containers.map((container) => container.composeProject).filter(Boolean))],
+      composeProjects: [
+        ...new Set(
+          containers
+            .map((container) => container.composeProject)
+            .filter(Boolean),
+        ),
+      ],
       containers,
       capturedAt: this.options.now().toISOString(),
     };
@@ -245,16 +288,19 @@ export class DockerodeBackend implements DockerBackend {
 
   async operateProject(
     projectPath: string,
-    operation: DockerProjectOperation
+    operation: DockerProjectOperation,
   ): Promise<DockerOperationResult> {
     const before = await this.getProjectSnapshot(projectPath);
     if (before.connection.state !== "ready" || !this.client) {
-      throw new Error(before.connection.error ?? "Docker daemon is unavailable.");
+      throw new Error(
+        before.connection.error ?? "Docker daemon is unavailable.",
+      );
     }
 
     const targets = before.containers.filter((container) => {
       if (operation === "start") return container.state !== "running";
-      if (operation === "stop") return container.state === "running" || container.state === "paused";
+      if (operation === "stop")
+        return container.state === "running" || container.state === "paused";
       return true;
     });
     const failed: DockerOperationResult["failed"] = [];
@@ -288,19 +334,25 @@ export class DockerodeBackend implements DockerBackend {
   async operateContainer(
     projectPath: string,
     containerId: string,
-    operation: DockerContainerOperation
+    operation: DockerContainerOperation,
   ): Promise<DockerContainerOperationResult> {
     const before = await this.getProjectSnapshot(projectPath);
     if (before.connection.state !== "ready" || !this.client) {
-      throw new Error(before.connection.error ?? "Docker daemon is unavailable.");
+      throw new Error(
+        before.connection.error ?? "Docker daemon is unavailable.",
+      );
     }
-    const target = before.containers.find((container) => container.id === containerId);
-    if (!target) throw new Error("Container does not belong to the bound Docker project.");
+    const target = before.containers.find(
+      (container) => container.id === containerId,
+    );
+    if (!target)
+      throw new Error("Container does not belong to the bound Docker project.");
 
     const shouldPerform =
       operation === "restart" ||
       (operation === "start" && target.state !== "running") ||
-      (operation === "stop" && (target.state === "running" || target.state === "paused")) ||
+      (operation === "stop" &&
+        (target.state === "running" || target.state === "paused")) ||
       (operation === "pause" && target.state === "running") ||
       (operation === "unpause" && target.state === "paused");
     if (shouldPerform) {
@@ -325,20 +377,28 @@ export class DockerodeBackend implements DockerBackend {
     projectPath: string,
     containerId: string,
     onRecord: (record: DockerLogRecord) => void,
-    options: { tail?: number; onDisconnect?: (error: string | null) => void } = {}
+    options: {
+      tail?: number;
+      onDisconnect?: (error: string | null) => void;
+    } = {},
   ): Promise<DockerLogSubscription> {
     const snapshot = await this.getProjectSnapshot(projectPath);
     if (snapshot.connection.state !== "ready" || !this.client) {
-      throw new Error(snapshot.connection.error ?? "Docker daemon is unavailable.");
+      throw new Error(
+        snapshot.connection.error ?? "Docker daemon is unavailable.",
+      );
     }
-    const summary = snapshot.containers.find((container) => container.id === containerId);
-    if (!summary) throw new Error("Container does not belong to the bound Docker project.");
+    const summary = snapshot.containers.find(
+      (container) => container.id === containerId,
+    );
+    if (!summary)
+      throw new Error("Container does not belong to the bound Docker project.");
 
     const container = this.client.getContainer(containerId);
     const inspection = await withTimeout(
       container.inspect(),
       this.options.timeoutMs,
-      "Docker container inspection"
+      "Docker container inspection",
     );
     const output = await container.logs({
       follow: true,
@@ -348,7 +408,9 @@ export class DockerodeBackend implements DockerBackend {
       tail: Math.max(0, Math.min(options.tail ?? 200, 10_000)),
     });
     if (Buffer.isBuffer(output)) {
-      throw new Error("Docker returned a finite log buffer instead of a follow stream.");
+      throw new Error(
+        "Docker returned a finite log buffer instead of a follow stream.",
+      );
     }
 
     const stream = output as Readable;
@@ -356,7 +418,10 @@ export class DockerodeBackend implements DockerBackend {
     const multiplexDecoder = new DockerMultiplexDecoder();
     let closed = false;
 
-    const publish = (source: "stdout" | "stderr" | "console", payload: Buffer): void => {
+    const publish = (
+      source: "stdout" | "stderr" | "console",
+      payload: Buffer,
+    ): void => {
       for (const line of lineDecoder.push(source, payload)) {
         onRecord({
           containerId: summary.id,
@@ -367,13 +432,19 @@ export class DockerodeBackend implements DockerBackend {
       }
     };
     const onData = (chunk: Buffer | string): void => {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      if (inspection.Config?.Tty) publish("console", bytes);
-      else {
-        for (const frame of multiplexDecoder.push(bytes)) publish(frame.stream, frame.payload);
+      if (closed) return;
+      try {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        if (inspection.Config?.Tty) publish("console", bytes);
+        else
+          for (const frame of multiplexDecoder.push(bytes))
+            publish(frame.stream, frame.payload);
+      } catch (error) {
+        finish(error instanceof Error ? error.message : String(error));
       }
     };
     const finish = (error: string | null): void => {
+      if (closed) return;
       for (const line of lineDecoder.flush()) {
         onRecord({
           containerId: summary.id,

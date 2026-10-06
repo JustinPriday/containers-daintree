@@ -1,6 +1,10 @@
 import { z } from "zod";
 
-export const dockerConnectionStateSchema = z.enum(["ready", "unavailable", "error"]);
+export const dockerConnectionStateSchema = z.enum([
+  "ready",
+  "unavailable",
+  "error",
+]);
 
 export const dockerDaemonSchema = z.object({
   version: z.string(),
@@ -34,6 +38,8 @@ export const dockerContainerSchema = z.object({
 });
 
 export const dockerProjectSnapshotSchema = z.object({
+  epoch: z.string().optional(),
+  revision: z.number().int().nonnegative().optional(),
   projectPath: z.string(),
   connection: dockerConnectionSchema,
   composeProjects: z.array(z.string()),
@@ -41,7 +47,11 @@ export const dockerProjectSnapshotSchema = z.object({
   capturedAt: z.string(),
 });
 
-export const dockerProjectOperationSchema = z.enum(["start", "stop", "restart"]);
+export const dockerProjectOperationSchema = z.enum([
+  "start",
+  "stop",
+  "restart",
+]);
 export const dockerContainerOperationSchema = z.enum([
   "start",
   "stop",
@@ -62,6 +72,8 @@ export const dockerLogRecordSchema = z.object({
 });
 
 export const dockerLogBatchSchema = z.object({
+  targetPath: z.string(),
+  epoch: z.string(),
   containerId: z.string(),
   sequence: z.number().int().nonnegative(),
   records: z.array(dockerLogRecordSchema),
@@ -76,7 +88,7 @@ export const dockerOperationResultSchema = z.object({
       containerId: z.string(),
       containerName: z.string(),
       error: z.string(),
-    })
+    }),
   ),
   snapshot: dockerProjectSnapshotSchema,
 });
@@ -92,10 +104,16 @@ export const dockerContainerOperationResultSchema = z.object({
 export type DockerConnection = z.infer<typeof dockerConnectionSchema>;
 export type DockerContainer = z.infer<typeof dockerContainerSchema>;
 export type DockerProjectSnapshot = z.infer<typeof dockerProjectSnapshotSchema>;
-export type DockerProjectOperation = z.infer<typeof dockerProjectOperationSchema>;
-export type DockerContainerOperation = z.infer<typeof dockerContainerOperationSchema>;
+export type DockerProjectOperation = z.infer<
+  typeof dockerProjectOperationSchema
+>;
+export type DockerContainerOperation = z.infer<
+  typeof dockerContainerOperationSchema
+>;
 export type DockerOperationResult = z.infer<typeof dockerOperationResultSchema>;
-export type DockerContainerOperationResult = z.infer<typeof dockerContainerOperationResultSchema>;
+export type DockerContainerOperationResult = z.infer<
+  typeof dockerContainerOperationResultSchema
+>;
 export type DockerLogStream = z.infer<typeof dockerLogStreamSchema>;
 export type DockerLogRecord = z.infer<typeof dockerLogRecordSchema>;
 export type DockerLogBatch = z.infer<typeof dockerLogBatchSchema>;
@@ -108,18 +126,18 @@ export interface DockerBackend {
   getProjectSnapshot(projectPath: string): Promise<DockerProjectSnapshot>;
   operateProject(
     projectPath: string,
-    operation: DockerProjectOperation
+    operation: DockerProjectOperation,
   ): Promise<DockerOperationResult>;
   operateContainer(
     projectPath: string,
     containerId: string,
-    operation: DockerContainerOperation
+    operation: DockerContainerOperation,
   ): Promise<DockerContainerOperationResult>;
   subscribeContainerLogs(
     projectPath: string,
     containerId: string,
     onRecord: (record: DockerLogRecord) => void,
-    options?: { tail?: number; onDisconnect?: (error: string | null) => void }
+    options?: { tail?: number; onDisconnect?: (error: string | null) => void },
   ): Promise<DockerLogSubscription>;
   dispose(): void;
 }

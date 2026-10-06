@@ -1,9 +1,31 @@
-// Daintree 0.27+ exposes stable host React facades for packaged third-party views.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { PanelViewProps } from "@daintreehq/plugin-sdk";
-import { useHostChannel, usePluginPanelEvent } from "./daintree/reactHooks.js";
+import {
+  useActionRunning,
+  useHostChannel,
+  usePanelToolbarItem,
+  usePluginPanelEvent,
+  useStreamBuffer,
+} from "@daintreehq/plugin-sdk/react";
+import {
+  Badge,
+  Button,
+  Callout,
+  ConfirmDialog,
+  EmptyState,
+  FormField,
+  Icon,
+  IconButton,
+  Input,
+  ListRow,
+  PaneLayout,
+  Skeleton,
+  StatusBar,
+  Tooltip,
+  VirtualList,
+  whenPluginUiReady,
+} from "@daintreehq/plugin-ui";
 import type {
-  DockerContainer,
   DockerContainerOperation,
   DockerContainerOperationResult,
   DockerLogBatch,
@@ -13,6 +35,7 @@ import type {
 } from "./docker/types.js";
 import { dockerPanelStyles } from "./panelStyles.js";
 import {
+  acceptSnapshot,
   appendLogBatch,
   emptyConsoleLogState,
   filterLogRecords,
@@ -20,495 +43,1012 @@ import {
   formatLogTimestamp,
   getServiceColor,
   isLoggableContainerState,
+  MAX_COPY_BYTES,
   resolveFollowingAfterScroll,
 } from "./shared/logConsole.js";
-import { parseDockerPanelBinding, type DockerPanelBinding } from "./shared/binding.js";
+import {
+  parseDockerPanelBinding,
+  type DockerPanelBinding,
+} from "./shared/binding.js";
 
-interface ResolveBindingArgs {
-  panelId: string;
-  initialArgs?: Record<string, unknown>;
-}
-
-interface SaveBindingArgs {
-  panelId: string;
-  binding: DockerPanelBinding;
-  dockerProjectPath: string;
-}
-
-interface DockerProjectArgs {
-  panelId: string;
-  initialArgs?: Record<string, unknown>;
-}
-
-interface DockerProjectOperationArgs extends DockerProjectArgs {
-  operation: DockerProjectOperation;
-}
-
-interface DockerContainerOperationArgs extends DockerProjectArgs {
-  containerId: string;
-  operation: DockerContainerOperation;
-}
-
-interface DockerLogsConnectArgs extends DockerProjectArgs {
-  containerIds: string[];
-  tail?: number;
-}
-
-interface DockerLogsConnectResult {
-  containerIds: string[];
-  connected: true;
-}
-
-interface DockerLogsDisconnectArgs {
-  panelId: string;
-}
-
-interface DockerLogsDisconnectResult {
-  disconnected: boolean;
-}
-
-interface DockerLogsDisconnectedEvent {
-  containerId: string;
-  error: string | null;
-}
-
-interface CopyLogsArgs {
-  text: string;
-}
-
-interface CopyLogsResult {
-  copied: true;
-}
-
-type IconName =
-  | "play"
-  | "stop"
-  | "restart"
-  | "pause"
-  | "refresh"
-  | "settings"
-  | "layers"
-  | "chevron-right"
-  | "arrow-down"
-  | "trash"
-  | "clock"
-  | "copy"
-  | "check"
-  | "sidebar-close"
-  | "sidebar-open";
-
-const ICON_PATHS: Record<IconName, React.ReactNode> = {
-  play: <path d="m7 5 10 7-10 7Z" />,
-  stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
-  restart: <><path d="M20 11a8 8 0 1 0-2.34 5.66" /><path d="M20 4v7h-7" /></>,
-  pause: <><path d="M9 5v14" /><path d="M15 5v14" /></>,
-  refresh: <><path d="M20 11a8 8 0 0 0-14.9-4" /><path d="M4 4v5h5" /><path d="M4 13a8 8 0 0 0 14.9 4" /><path d="M20 20v-5h-5" /></>,
-  settings: <><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" /><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.86 2.86-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1H9.6V21a1.7 1.7 0 0 0-1.1-1.6 1.7 1.7 0 0 0-1.88.34l-.06.06-2.86-2.86.06-.06A1.7 1.7 0 0 0 4.1 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1V9.6h.1A1.7 1.7 0 0 0 4.1 8.5a1.7 1.7 0 0 0-.34-1.88l-.06-.06L6.56 3.7l.06.06A1.7 1.7 0 0 0 8.5 4.1a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.1h4v.1A1.7 1.7 0 0 0 15 4.1a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.86 2.86-.06.06A1.7 1.7 0 0 0 19.4 8.5a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1 .4h.1v4H21a1.7 1.7 0 0 0-1.6 1.1Z" /></>,
-  layers: <><path d="m12 2 9 5-9 5-9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></>,
-  "chevron-right": <path d="m9 18 6-6-6-6" />,
-  "arrow-down": <><path d="M12 5v14" /><path d="m19 12-7 7-7-7" /></>,
-  trash: <><path d="M4 7h16" /><path d="M9 7V4h6v3" /><path d="m6 7 1 14h10l1-14" /></>,
-  clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
-  copy: <><rect x="8" y="8" width="11" height="11" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></>,
-  check: <path d="m5 12 4 4L19 6" />,
-  "sidebar-close": <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path d="m15 9-3 3 3 3" /></>,
-  "sidebar-open": <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path d="m13 9 3 3-3 3" /></>,
+type PanelArgs = { panelId: string; initialArgs?: Record<string, unknown> };
+type Preferences = {
+  selectedContainerId: string | null;
+  showServices: boolean;
 };
-
-function Icon({ name }: { name: IconName }): React.ReactElement {
-  return <svg className="dc-icon" viewBox="0 0 24 24" aria-hidden="true">{ICON_PATHS[name]}</svg>;
-}
-
-interface IconButtonProps {
-  icon: IconName;
+type ViewState = Preferences & {
+  showTimestamps: boolean;
+  following: boolean;
+  lastStreamEpoch: string | null;
+};
+type PendingOperation = {
+  operation: DockerContainerOperation;
+  containerId?: string;
   label: string;
-  onClick: () => void;
-  disabled?: boolean;
-  tone?: "primary" | "danger";
-  active?: boolean;
-  showLabel?: boolean;
+  target: string;
+};
+function restoredState(args: PanelViewProps["initialArgs"]): ViewState | null {
+  const value = args?.ui;
+  if (!value || typeof value !== "object") return null;
+  const state = value as Partial<ViewState>;
+  if (
+    typeof state.showServices !== "boolean" ||
+    !(
+      state.selectedContainerId === null ||
+      typeof state.selectedContainerId === "string"
+    )
+  )
+    return null;
+  return {
+    selectedContainerId: state.selectedContainerId,
+    showServices: state.showServices,
+    showTimestamps: state.showTimestamps === true,
+    following: state.following !== false,
+    lastStreamEpoch:
+      typeof state.lastStreamEpoch === "string" ? state.lastStreamEpoch : null,
+  };
 }
 
-function IconButton({ icon, label, onClick, disabled, tone, active, showLabel }: IconButtonProps) {
-  const className = ["dc-button", showLabel ? "" : "icon", tone ?? "", active ? "active" : ""]
-    .filter(Boolean)
-    .join(" ");
-  return (
-    <button className={className} type="button" title={label} aria-label={label} aria-pressed={active} disabled={disabled} onClick={onClick}>
-      <Icon name={icon} />
-      {showLabel ? <span>{label}</span> : null}
-    </button>
+export default function DockerConsolePanel(
+  props: PanelViewProps,
+): React.ReactElement {
+  const { panelId, pluginId, initialArgs, persistState } = props;
+  const restored = restoredState(initialArgs);
+  const [binding, setBinding] = useState(() =>
+    parseDockerPanelBinding(initialArgs),
   );
-}
-
-function stateClass(container: DockerContainer): string {
-  const state = (container.health === "unhealthy" ? "error" : container.state).toLowerCase();
-  return state.replace(/[^a-z-]/g, "");
-}
-
-function serviceLabel(container: DockerContainer): string {
-  return container.serviceName || container.name;
-}
-
-export default function DockerConsolePanel({
-  panelId,
-  pluginId,
-  initialArgs,
-}: PanelViewProps): React.ReactElement {
-  const initialBinding = parseDockerPanelBinding(initialArgs);
-  const [binding, setBinding] = useState<DockerPanelBinding | null>(initialBinding);
-  const [targetPath, setTargetPath] = useState(initialBinding?.dockerProjectPath ?? "");
+  const [verified, setVerified] = useState(false);
+  const [targetPath, setTargetPath] = useState(
+    binding?.dockerProjectPath ?? "",
+  );
   const [showBinding, setShowBinding] = useState(false);
   const [snapshot, setSnapshot] = useState<DockerProjectSnapshot | null>(null);
-  const [selectedContainerId, setSelectedContainerId] = useState<string | null>(null);
-  const [logs, setLogs] = useState(emptyConsoleLogState);
+  const [logs, setLogs] = useState(() => ({
+    ...emptyConsoleLogState(),
+    epoch: restored?.lastStreamEpoch ?? null,
+  }));
+  const [selectedContainerId, setSelectedContainerId] = useState<string | null>(
+    restored?.selectedContainerId ?? null,
+  );
+  const [showServices, setShowServices] = useState(
+    restored?.showServices ?? true,
+  );
+  const [showTimestamps, setShowTimestamps] = useState(
+    restored?.showTimestamps ?? false,
+  );
+  const [following, setFollowing] = useState(restored?.following ?? true);
+  const [preferencesReady, setPreferencesReady] = useState(false);
   const [disconnected, setDisconnected] = useState<Record<string, string>>({});
   const [streamRevision, setStreamRevision] = useState(0);
-  const [following, setFollowing] = useState(true);
-  const [showTimestamps, setShowTimestamps] = useState(false);
-  const [showServices, setShowServices] = useState(true);
   const [copyConfirmed, setCopyConfirmed] = useState(false);
-  const logViewportRef = useRef<HTMLDivElement>(null);
-  const userScrollIntentRef = useRef(false);
-  const scrollIntentTimerRef = useRef<number | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [pending, setPending] = useState<PendingOperation | null>(null);
+  const viewport = useRef<HTMLElement | null>(null);
+  const logContent = useRef<HTMLDivElement>(null);
+  const followRef = useRef(following);
+  followRef.current = following;
+  const clearFloor = useRef<{ epoch: string | null; sequence: number }>({
+    epoch: null,
+    sequence: 0,
+  });
+  const intentionalScroll = useRef(false);
+  const scrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recoveryBusy = useRef(false);
+  const targetGeneration = useRef(0);
+  const activeTarget = useRef(binding?.dockerProjectPath);
+  activeTarget.current = binding?.dockerProjectPath;
+  const stream = useStreamBuffer<DockerLogBatch>({
+    maxItems: 128,
+    flush: "frame",
+  });
+  const recentBatches = useRef<DockerLogBatch[]>([]);
+  const args: PanelArgs = { panelId, initialArgs };
+  const resolver = useHostChannel<PanelArgs, DockerPanelBinding | null>(
+    pluginId,
+    "binding.resolve",
+  );
+  const saver = useHostChannel<
+    { panelId: string; binding: DockerPanelBinding; dockerProjectPath: string },
+    DockerPanelBinding
+  >(pluginId, "binding.setDockerProjectPath");
+  const preferences = useHostChannel<{ panelId: string }, Preferences>(
+    pluginId,
+    "preferences.resolve",
+  );
+  const project = useHostChannel<PanelArgs, DockerProjectSnapshot>(
+    pluginId,
+    "docker.project.get",
+  );
+  const operator = useHostChannel<
+    PanelArgs & { operation: DockerProjectOperation },
+    DockerOperationResult
+  >(pluginId, "docker.project.operate");
+  const containerOperator = useHostChannel<
+    PanelArgs & { containerId: string; operation: DockerContainerOperation },
+    DockerContainerOperationResult
+  >(pluginId, "docker.container.operate");
+  const connector = useHostChannel<
+    PanelArgs & { containerIds: string[]; tail: number },
+    { connected: true }
+  >(pluginId, "docker.logs.connect");
+  const recovery = useHostChannel<
+    { panelId: string },
+    { epoch: string | null; batches: DockerLogBatch[] }
+  >(pluginId, "docker.logs.recover");
+  const copier = useHostChannel<{ text: string }, { copied: true }>(
+    pluginId,
+    "docker.logs.copy",
+  );
+  const settings = useHostChannel<Record<string, never>, { opened: true }>(
+    pluginId,
+    "settings.open",
+  );
+  const headerRefresh = useActionRunning(
+    props,
+    "justinpriday.containers.refresh",
+  );
+  const hasHeader = usePanelToolbarItem(
+    props,
+    "justinpriday.containers.refresh",
+    {
+      disabled: !binding || saver.loading,
+      updatedAt: snapshot ? Date.parse(snapshot.capturedAt) : undefined,
+      staleAfterMs: 60_000,
+    },
+  );
+  const applySnapshot = (next: DockerProjectSnapshot) => {
+    if (next.projectPath === activeTarget.current)
+      setSnapshot((current) => acceptSnapshot(current, next));
+  };
 
-  const resolver = useHostChannel<ResolveBindingArgs, DockerPanelBinding | null>(pluginId, "binding.resolve");
-  const saver = useHostChannel<SaveBindingArgs, DockerPanelBinding>(pluginId, "binding.setDockerProjectPath");
-  const project = useHostChannel<DockerProjectArgs, DockerProjectSnapshot>(pluginId, "docker.project.get");
-  const operator = useHostChannel<DockerProjectOperationArgs, DockerOperationResult>(pluginId, "docker.project.operate");
-  const containerOperator = useHostChannel<DockerContainerOperationArgs, DockerContainerOperationResult>(pluginId, "docker.container.operate");
-  const logConnector = useHostChannel<DockerLogsConnectArgs, DockerLogsConnectResult>(pluginId, "docker.logs.connect");
-  const logDisconnector = useHostChannel<DockerLogsDisconnectArgs, DockerLogsDisconnectResult>(pluginId, "docker.logs.disconnect");
-  const logCopier = useHostChannel<CopyLogsArgs, CopyLogsResult>(pluginId, "docker.logs.copy");
-
-  usePluginPanelEvent<DockerLogBatch>(pluginId, "docker.logs.batch", panelId, (batch) => {
-    setLogs((current) => appendLogBatch(current, batch));
+  const recover = async (): Promise<void> => {
+    if (recoveryBusy.current) return;
+    recoveryBusy.current = true;
+    const generation = targetGeneration.current;
+    try {
+      const result = await recovery.invoke({ panelId });
+      if (
+        !result?.epoch ||
+        props.disposeSignal.aborted ||
+        generation !== targetGeneration.current
+      )
+        return;
+      setLogs((current) => {
+        // Snapshot is bounded; merge pushes received while it was in flight.
+        let next = emptyConsoleLogState();
+        if (result.epoch === clearFloor.current.epoch) {
+          next = {
+            ...next,
+            epoch: result.epoch,
+            nextSequence: clearFloor.current.sequence,
+          };
+        }
+        for (const batch of [
+          ...result.batches,
+          ...recentBatches.current.filter(
+            (batch) => batch.epoch === result.epoch,
+          ),
+        ]) {
+          if (
+            batch.epoch !== clearFloor.current.epoch ||
+            batch.sequence >= clearFloor.current.sequence
+          )
+            next = appendLogBatch(next, batch);
+        }
+        return {
+          ...next,
+          missedBatches: Math.max(
+            current.missedBatches,
+            next.missedBatches,
+            current.epoch && current.epoch !== result.epoch ? 1 : 0,
+          ),
+          retiredEpochs: current.retiredEpochs,
+        };
+      });
+    } finally {
+      recoveryBusy.current = false;
+    }
+  };
+  usePluginPanelEvent<DockerLogBatch>(
+    pluginId,
+    "docker.logs.batch",
+    panelId,
+    (batch) => {
+      if (batch.targetPath !== activeTarget.current) return;
+      recentBatches.current = [...recentBatches.current.slice(-127), batch];
+      stream.push(batch);
+    },
+  );
+  usePluginPanelEvent<{ containerId: string; error: string | null }>(
+    pluginId,
+    "docker.logs.disconnected",
+    panelId,
+    (event) => {
+      setDisconnected((current) => ({
+        ...current,
+        [event.containerId]: event.error ?? "Log stream ended",
+      }));
+    },
+  );
+  usePluginPanelEvent<DockerProjectSnapshot>(
+    pluginId,
+    "docker.project.snapshot",
+    panelId,
+    (next) => {
+      applySnapshot(next);
+      setVerified(true);
+    },
+  );
+  usePluginPanelEvent(pluginId, "docker.project.invalidated", panelId, () => {
+    void project.invoke(args).then((next) => {
+      if (next) applySnapshot(next);
+    });
   });
-  usePluginPanelEvent<DockerLogsDisconnectedEvent>(pluginId, "docker.logs.disconnected", panelId, (event) => {
-    setDisconnected((current) => ({
-      ...current,
-      [event.containerId]: event.error ?? "Log stream ended",
-    }));
-  });
-  usePluginPanelEvent<DockerProjectSnapshot>(pluginId, "docker.project.snapshot", panelId, (next) => {
-    setSnapshot(next);
-  });
+  useEffect(() => {
+    setLogs((current) =>
+      stream.items
+        .filter((batch) => batch.targetPath === activeTarget.current)
+        .reduce(appendLogBatchWithoutIndex, current),
+    );
+  }, [stream.items]);
+  function appendLogBatchWithoutIndex(
+    current: ReturnType<typeof emptyConsoleLogState>,
+    batch: DockerLogBatch,
+  ) {
+    return appendLogBatch(current, batch);
+  }
+  useEffect(() => {
+    if (logs.missedBatches > 0) void recover();
+  }, [logs.missedBatches]);
 
   useEffect(() => {
     let cancelled = false;
-    void resolver.invoke({ panelId, initialArgs }).then(async (resolved) => {
-      if (!resolved || cancelled) return;
-      setBinding(resolved);
-      setTargetPath(resolved.dockerProjectPath);
-      const nextSnapshot = await project.invoke({ panelId, initialArgs });
-      if (!cancelled && nextSnapshot) setSnapshot(nextSnapshot);
+    void Promise.all([
+      resolver.invoke(args),
+      preferences.invoke({ panelId }),
+    ]).then(async ([resolved, oldPreferences]) => {
+      if (cancelled || props.disposeSignal.aborted) return;
+      if (resolved) {
+        activeTarget.current = resolved.dockerProjectPath;
+        setBinding(resolved);
+        setTargetPath(resolved.dockerProjectPath);
+        setVerified(true);
+        persistState?.(resolved);
+      }
+      if (!restored && oldPreferences) {
+        setSelectedContainerId(oldPreferences.selectedContainerId);
+        setShowServices(oldPreferences.showServices);
+      }
+      setPreferencesReady(true);
+      if (resolved) {
+        const next = await project.invoke(args);
+        if (next && !cancelled) applySnapshot(next);
+      }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [panelId, initialArgs]);
-
-  const loggableContainerIds = useMemo(
-    () => (snapshot?.containers ?? []).filter((container) => isLoggableContainerState(container.state)).map((container) => container.id).sort(),
-    [snapshot]
-  );
-  const loggableKey = loggableContainerIds.join("\u0000");
-
   useEffect(() => {
-    if (!binding) return;
-    setDisconnected({});
-    void logConnector.invoke({ panelId, initialArgs, containerIds: loggableContainerIds, tail: 120 });
-    return () => { void logDisconnector.invoke({ panelId }); };
-  }, [panelId, initialArgs, binding?.dockerProjectPath, loggableKey, streamRevision]);
-
-  const visibleRecords = useMemo(
-    () => filterLogRecords(logs.records, selectedContainerId),
-    [logs.records, selectedContainerId]
+    if (preferencesReady)
+      persistState?.({
+        ui: {
+          selectedContainerId,
+          showServices,
+          showTimestamps,
+          following,
+          lastStreamEpoch: logs.epoch,
+        },
+      });
+  }, [
+    preferencesReady,
+    selectedContainerId,
+    showServices,
+    showTimestamps,
+    following,
+    logs.epoch,
+    persistState,
+  ]);
+  useEffect(() => {
+    props.setHasUnsavedChanges?.(
+      showBinding && targetPath !== binding?.dockerProjectPath,
+    );
+  }, [showBinding, targetPath, binding?.dockerProjectPath]);
+  const containerIds = useMemo(
+    () =>
+      (snapshot?.containers ?? [])
+        .filter((container) => isLoggableContainerState(container.state))
+        .map((container) => container.id)
+        .sort(),
+    [snapshot],
   );
-
+  const containerKey = containerIds.join("\u0000");
+  useEffect(() => {
+    if (!verified || !binding || !snapshot) return;
+    let cancelled = false;
+    setDisconnected({});
+    void connector.invoke({ ...args, containerIds, tail: 120 }).then(() => {
+      if (!cancelled) void recover();
+    });
+    // The worker owns stream lifetimes; remount disposal is not panel deletion.
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    verified,
+    panelId,
+    binding?.dockerProjectPath,
+    containerKey,
+    streamRevision,
+  ]);
+  const visible = useMemo(
+    () => filterLogRecords(logs.records, selectedContainerId),
+    [logs.records, selectedContainerId],
+  );
   useEffect(() => {
     if (!following) return;
     const frame = requestAnimationFrame(() => {
-      const viewport = logViewportRef.current;
-      if (viewport) viewport.scrollTop = viewport.scrollHeight;
+      if (viewport.current)
+        viewport.current.scrollTop = viewport.current.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [visibleRecords.length, following]);
-
+  }, [visible, following]);
   useEffect(() => {
-    const viewport = logViewportRef.current;
-    if (!viewport || !following || typeof ResizeObserver === "undefined") return;
+    let cancelled = false;
+    let observer: ResizeObserver | undefined;
     let frame = 0;
-    const observer = new ResizeObserver(() => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        viewport.scrollTop = viewport.scrollHeight;
+    // Kit VirtualList owns its ref/scroll handler. Bind to our public role in our
+    // own content and observe capture events without overriding its virtualiser.
+    void whenPluginUiReady()
+      .then(() => {
+        if (cancelled) return;
+        viewport.current =
+          logContent.current?.querySelector<HTMLElement>('[role="log"]') ??
+          null;
+        const element = viewport.current;
+        if (!element) return;
+        const anchor = () => {
+          cancelAnimationFrame(frame);
+          if (followRef.current)
+            frame = requestAnimationFrame(() => {
+              element.scrollTop = element.scrollHeight;
+            });
+        };
+        anchor();
+        observer = new ResizeObserver(anchor);
+        observer.observe(element);
+      })
+      .catch((error) => {
+        if (!cancelled) setLocalError(String(error));
       });
-    });
-    observer.observe(viewport);
     return () => {
+      cancelled = true;
+      observer?.disconnect();
       cancelAnimationFrame(frame);
-      observer.disconnect();
+      viewport.current = null;
     };
-  }, [following]);
-
-  useEffect(() => {
-    setFollowing(true);
-  }, [selectedContainerId]);
-
+  }, [visible.length > 0]);
   useEffect(() => {
     if (!copyConfirmed) return;
-    const timer = window.setTimeout(() => setCopyConfirmed(false), 1_500);
-    return () => window.clearTimeout(timer);
+    const timer = setTimeout(() => setCopyConfirmed(false), 1500);
+    return () => clearTimeout(timer);
   }, [copyConfirmed]);
+  useEffect(
+    () => () => {
+      if (scrollTimer.current) clearTimeout(scrollTimer.current);
+    },
+    [],
+  );
 
-  useEffect(() => () => {
-    if (scrollIntentTimerRef.current !== null) {
-      window.clearTimeout(scrollIntentTimerRef.current);
+  const refresh = async () => {
+    setLocalError(null);
+    const resolved = await resolver.invoke(args);
+    if (!resolved) {
+      setVerified(false);
+      return;
     }
-  }, []);
-
-  if (!binding) {
-    return (
-      <div className="dc-root">
-        <style>{dockerPanelStyles}</style>
-        <div className="dc-empty-project"><div><strong>Container Console</strong>Open this panel with “Containers: Open Console” to bind it to a worktree.</div></div>
-      </div>
-    );
-  }
-
-  const refresh = async (): Promise<void> => {
-    const next = await project.invoke({ panelId, initialArgs });
-    if (next) setSnapshot(next);
+    setBinding(resolved);
+    setVerified(true);
+    const next = await project.invoke(args);
+    if (next) applySnapshot(next);
     setStreamRevision((value) => value + 1);
   };
-
-  const operate = async (operation: DockerProjectOperation): Promise<void> => {
-    const result = await operator.invoke({ panelId, initialArgs, operation });
-    if (result) setSnapshot(result.snapshot);
-  };
-
-  const operateContainer = async (containerId: string, operation: DockerContainerOperation): Promise<void> => {
-    const result = await containerOperator.invoke({ panelId, initialArgs, containerId, operation });
-    if (result) setSnapshot(result.snapshot);
-  };
-
-  const saveTarget = async (event: React.FormEvent): Promise<void> => {
+  const saveTarget = async (event: React.FormEvent) => {
     event.preventDefault();
-    const result = await saver.invoke({ panelId, binding, dockerProjectPath: targetPath });
-    if (!result) return;
-    setBinding(result);
-    setLogs(emptyConsoleLogState());
-    setSelectedContainerId(null);
-    const next = await project.invoke({ panelId, initialArgs });
-    if (next) setSnapshot(next);
+    if (!binding) return;
+    const saved = await saver.invoke({
+      panelId,
+      binding,
+      dockerProjectPath: targetPath.trim(),
+    });
+    if (!saved) return;
+    targetGeneration.current++;
+    activeTarget.current = saved.dockerProjectPath;
+    setBinding(saved);
+    setVerified(true);
+    setTargetPath(saved.dockerProjectPath);
+    persistState?.(saved);
     setShowBinding(false);
+    setSelectedContainerId(null);
+    setSnapshot(null);
+    stream.clear();
+    recentBatches.current = [];
+    setLogs(emptyConsoleLogState());
+    const next = await project.invoke(args);
+    if (next) applySnapshot(next);
   };
-
-  const containers = snapshot?.containers ?? [];
-  const composeProjects = snapshot?.composeProjects ?? [];
-  const composeProjectTitle = composeProjects.length === 1
-    ? composeProjects[0]!
-    : composeProjects.length > 1
-      ? `${composeProjects.length} Compose projects`
-      : binding.worktreeName;
-  const composeProjectTooltip = composeProjects.length > 0
-    ? composeProjects.join(", ")
-    : "No matching Compose project discovered";
-  const selectedContainer = containers.find((container) => container.id === selectedContainerId) ?? null;
-  const runningCount = containers.filter((container) => container.state === "running").length;
-  const connectionReady = snapshot?.connection.state === "ready";
-  const busy = project.loading || operator.loading || containerOperator.loading;
-  const consoleTitle = selectedContainer ? serviceLabel(selectedContainer) : "All services";
-  const consoleSubtitle = selectedContainer
-    ? selectedContainer.status
-    : `${runningCount}/${containers.length} running`;
-  const disconnectedCount = Object.keys(disconnected).length;
-
-  const scrollToLive = (): void => {
-    setFollowing(true);
-    const viewport = logViewportRef.current;
-    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+  const requestOperation = (
+    operation: DockerContainerOperation,
+    containerId?: string,
+  ) => {
+    if (!binding) return;
+    const container = snapshot?.containers.find(
+      (item) => item.id === containerId,
+    );
+    setPending({
+      operation,
+      containerId,
+      label: container
+        ? container.serviceName || container.name
+        : "project containers",
+      target: binding.dockerProjectPath,
+    });
   };
-
-  const releaseUserScrollIntent = (): void => {
-    if (scrollIntentTimerRef.current !== null) {
-      window.clearTimeout(scrollIntentTimerRef.current);
+  const confirmOperation = async () => {
+    if (!pending || !binding || pending.target !== binding.dockerProjectPath) {
+      setPending(null);
+      return;
     }
-    scrollIntentTimerRef.current = window.setTimeout(() => {
-      userScrollIntentRef.current = false;
-      scrollIntentTimerRef.current = null;
-    }, 180);
-  };
-
-  const armUserScrollIntent = (): void => {
-    userScrollIntentRef.current = true;
-    releaseUserScrollIntent();
-  };
-
-  const holdUserScrollIntent = (): void => {
-    if (scrollIntentTimerRef.current !== null) {
-      window.clearTimeout(scrollIntentTimerRef.current);
-      scrollIntentTimerRef.current = null;
+    const result = pending.containerId
+      ? await containerOperator.invoke({
+          ...args,
+          containerId: pending.containerId,
+          operation: pending.operation,
+        })
+      : await operator.invoke({
+          ...args,
+          operation: pending.operation as DockerProjectOperation,
+        });
+    if (result) {
+      applySnapshot(result.snapshot);
+      if ("failed" in result && result.failed.length)
+        setLocalError(
+          `${result.succeeded}/${result.attempted} containers updated. ${result.failed.map((item) => `${item.containerName}: ${item.error}`).join("; ")}`,
+        );
     }
-    userScrollIntentRef.current = true;
+    setPending(null);
   };
-
-  const copyVisibleLogs = async (): Promise<void> => {
-    const text = formatLogRecordsForClipboard(visibleRecords, showTimestamps);
-    if (!text) return;
-    const result = await logCopier.invoke({ text });
+  const copy = async () => {
+    const text = formatLogRecordsForClipboard(visible, showTimestamps);
+    if (new TextEncoder().encode(text).byteLength > MAX_COPY_BYTES) {
+      setLocalError(
+        "Copy is limited to 1 MiB. Select a service or clear older history.",
+      );
+      return;
+    }
+    const result = await copier.invoke({ text });
     if (result?.copied) setCopyConfirmed(true);
   };
+  const armScroll = () => {
+    intentionalScroll.current = true;
+    if (scrollTimer.current) clearTimeout(scrollTimer.current);
+    scrollTimer.current = setTimeout(() => {
+      intentionalScroll.current = false;
+    }, 200);
+  };
+  const containers = snapshot?.containers ?? [];
+  const selected = containers.find(
+    (container) => container.id === selectedContainerId,
+  );
+  const title = selected
+    ? selected.serviceName || selected.name
+    : "All services";
+  const running = containers.filter(
+    (container) => container.state === "running",
+  ).length;
+  const busy = operator.loading || containerOperator.loading || saver.loading;
+  const ready = verified && snapshot?.connection.state === "ready";
+  const error =
+    localError ??
+    (!verified ? resolver.error?.message : null) ??
+    saver.error?.message ??
+    project.error?.message ??
+    operator.error?.message ??
+    containerOperator.error?.message ??
+    connector.error?.message ??
+    copier.error?.message ??
+    settings.error?.message ??
+    snapshot?.connection.error;
 
   return (
     <div className="dc-root" data-panel-id={panelId}>
       <style>{dockerPanelStyles}</style>
-
-      <header className="dc-toolbar">
-        <span className={`dc-status-dot ${connectionReady ? "running" : "error"}`} />
-        <div className="dc-project">
-          <div className="dc-project-title">
-            <span title={composeProjectTooltip}>{composeProjectTitle}</span>
-            {composeProjects.length > 0 ? <span className="dc-project-kind">Compose</span> : null}
-            <span style={{ color: "var(--dc-faint)", fontSize: 10, fontWeight: 500 }}>
-              {connectionReady ? `Docker ${snapshot?.connection.daemon?.version ?? "ready"}` : snapshot?.connection.state ?? "Connecting"}
-            </span>
-          </div>
-          <div className="dc-project-path" title={`Worktree: ${binding.worktreeName}\nDocker target: ${binding.dockerProjectPath}`}>
-            <span className="dc-project-context">Worktree</span> {binding.worktreeName}
-            <span className="dc-project-separator">·</span>
-            <span className="dc-project-context">Target</span> {binding.dockerProjectPath}
-          </div>
-        </div>
-        <div className="dc-toolbar-actions">
-          <IconButton icon="refresh" label="Refresh" onClick={() => void refresh()} disabled={busy} showLabel />
-          <IconButton icon="play" label="Start" onClick={() => void operate("start")} disabled={busy || !connectionReady} tone="primary" showLabel />
-          <IconButton icon="stop" label="Stop" onClick={() => void operate("stop")} disabled={busy || !connectionReady} tone="danger" showLabel />
-          <IconButton icon="restart" label="Restart" onClick={() => void operate("restart")} disabled={busy || !connectionReady} showLabel />
-          <IconButton icon="settings" label="Change Docker project binding" onClick={() => setShowBinding((value) => !value)} active={showBinding} />
-        </div>
-      </header>
-
-      {showBinding ? (
-        <form className="dc-binding" onSubmit={(event) => void saveTarget(event)}>
-          <input aria-label="Docker project path" value={targetPath} onChange={(event) => setTargetPath(event.target.value)} />
-          <button className="dc-button" type="submit" disabled={saver.loading || targetPath.trim().length === 0}>{saver.loading ? "Saving…" : "Bind"}</button>
-          <button className="dc-button" type="button" onClick={() => { setTargetPath(binding.dockerProjectPath); setShowBinding(false); }}>Cancel</button>
-        </form>
-      ) : null}
-
-      {snapshot?.connection.error || project.error || operator.error || containerOperator.error || logConnector.error ? (
-        <div className="dc-alert">
-          {snapshot?.connection.error ?? project.error?.message ?? operator.error?.message ?? containerOperator.error?.message ?? logConnector.error?.message}
-        </div>
-      ) : null}
-
-      {containers.length > 0 ? (
-        <div className="dc-body">
-          {showServices ? <aside className="dc-services" aria-label="Compose services">
-            <div className="dc-services-heading"><span>Services</span><IconButton icon="sidebar-close" label="Hide services" onClick={() => setShowServices(false)} /></div>
-            <div className="dc-service-scroll">
-              <div className={`dc-service ${selectedContainerId === null ? "selected" : ""}`}>
-                <button className="dc-service-select" type="button" onClick={() => setSelectedContainerId(null)} aria-pressed={selectedContainerId === null}>
-                  <Icon name="layers" />
-                  <span className="dc-service-copy">
-                    <span className="dc-service-name">All services</span>
-                    <span className="dc-service-detail">{runningCount}/{containers.length} running</span>
-                  </span>
-                  <span className="dc-open-console">Console <Icon name="chevron-right" /></span>
-                </button>
-              </div>
-              {containers.map((container) => {
-                const active = container.id === selectedContainerId;
-                const running = container.state === "running";
-                const paused = container.state === "paused";
-                return (
-                  <div key={container.id} className={`dc-service ${active ? "selected" : ""}`}>
-                    <button className="dc-service-select" type="button" onClick={() => setSelectedContainerId(container.id)} aria-pressed={active}>
-                      <span className={`dc-status-dot ${stateClass(container)}`} title={container.health ?? container.status} />
-                      <span className="dc-service-copy">
-                        <span className="dc-service-name" title={serviceLabel(container)}>{serviceLabel(container)}</span>
-                        <span className="dc-service-detail" title={`${container.name} · ${container.status} · ${container.image}`}>{container.name} · {container.status}</span>
-                      </span>
-                      <span className="dc-open-console">Logs <Icon name="chevron-right" /></span>
-                    </button>
-                    <div className="dc-row-actions" aria-label={`${serviceLabel(container)} controls`}>
-                      {!running && !paused ? <IconButton icon="play" label={`Start ${serviceLabel(container)}`} onClick={() => void operateContainer(container.id, "start")} disabled={busy} tone="primary" /> : null}
-                      {running || paused ? <IconButton icon="stop" label={`Stop ${serviceLabel(container)}`} onClick={() => void operateContainer(container.id, "stop")} disabled={busy} tone="danger" /> : null}
-                      {running ? <IconButton icon="pause" label={`Pause ${serviceLabel(container)}`} onClick={() => void operateContainer(container.id, "pause")} disabled={busy} /> : null}
-                      {paused ? <IconButton icon="play" label={`Resume ${serviceLabel(container)}`} onClick={() => void operateContainer(container.id, "unpause")} disabled={busy} tone="primary" /> : null}
-                      <IconButton icon="restart" label={`Restart ${serviceLabel(container)}`} onClick={() => void operateContainer(container.id, "restart")} disabled={busy} />
-                    </div>
+      <PaneLayout
+        scroll="none"
+        bodyClassName="flex flex-col min-h-0 min-w-0"
+        toolbar={
+          <>
+            <div className="dc-context">
+              <div className="dc-target">
+                <Tooltip
+                  content={
+                    binding
+                      ? `Worktree: ${binding.worktreePath}\nDocker target: ${binding.dockerProjectPath}`
+                      : "No worktree binding"
+                  }
+                >
+                  <div className="dc-target-label">
+                    <Icon name="folder" />
+                    <strong>
+                      {binding?.worktreeName ?? "Container Console"}
+                    </strong>
                   </div>
-                );
-              })}
-            </div>
-          </aside> : null}
-
-          <main className="dc-console">
-            <div className="dc-console-head">
-              {!showServices ? <IconButton icon="sidebar-open" label="Show services" onClick={() => setShowServices(true)} /> : null}
-              <div className="dc-console-title"><span className="dc-console-kicker">Console</span>{consoleTitle} <span className="dc-console-subtitle">{consoleSubtitle}</span></div>
-              <div className="dc-console-actions">
-                <IconButton icon="clock" label={showTimestamps ? "Hide timestamps" : "Show timestamps"} onClick={() => setShowTimestamps((value) => !value)} active={showTimestamps} />
-                <IconButton icon={copyConfirmed ? "check" : "copy"} label={copyConfirmed ? "Copied" : "Copy visible console"} onClick={() => void copyVisibleLogs()} disabled={visibleRecords.length === 0 || logCopier.loading} active={copyConfirmed} />
-                <IconButton icon="trash" label="Clear log buffer" onClick={() => setLogs(emptyConsoleLogState())} disabled={logs.records.length === 0} />
+                </Tooltip>
+                <div className="dc-target-path">
+                  {binding?.dockerProjectPath ??
+                    "Open Containers from a worktree"}
+                </div>
               </div>
+              <Badge tone={ready ? "neutral" : "warning"}>
+                {ready
+                  ? `${running}/${containers.length} running`
+                  : verified
+                    ? "Docker offline"
+                    : "Verify target"}
+              </Badge>
+              {!hasHeader && (
+                <IconButton
+                  icon="refresh"
+                  aria-label="Refresh"
+                  size="sm"
+                  loading={project.loading || headerRefresh}
+                  onClick={() => void refresh()}
+                />
+              )}
+              <IconButton
+                icon="settings"
+                aria-label="Change Docker target"
+                size="sm"
+                pressed={showBinding}
+                disabled={busy || !verified}
+                onClick={() => setShowBinding((value) => !value)}
+              />
             </div>
-            <div
-              ref={logViewportRef}
-              className="dc-log-viewport"
-              tabIndex={0}
-              aria-label={`${consoleTitle} log output`}
-              onWheel={armUserScrollIntent}
-              onKeyDown={(event) => {
-                if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
-                  armUserScrollIntent();
+            {showBinding && (
+              <form
+                className="dc-binding"
+                onSubmit={(event) => void saveTarget(event)}
+              >
+                <FormField
+                  label="Docker project path"
+                  error={saver.error?.message}
+                  className="min-w-0 flex-1"
+                >
+                  {(control) => (
+                    <Input
+                      {...control}
+                      value={targetPath}
+                      onValueChange={setTargetPath}
+                      density="compact"
+                      required
+                    />
+                  )}
+                </FormField>
+                <div className="dc-actions">
+                  <Button
+                    type="submit"
+                    size="sm"
+                    loading={saver.loading}
+                    disabled={!targetPath.trim()}
+                  >
+                    Bind target
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setTargetPath(binding?.dockerProjectPath ?? "");
+                      setShowBinding(false);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            )}
+            {error && (
+              <Callout
+                severity="error"
+                variant="strip"
+                role="alert"
+                action={
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => void refresh()}
+                  >
+                    Refresh
+                  </Button>
                 }
-              }}
-              onPointerDown={holdUserScrollIntent}
-              onPointerUp={releaseUserScrollIntent}
-              onPointerCancel={releaseUserScrollIntent}
-              onScroll={(event) => {
-                const element = event.currentTarget;
-                setFollowing((current) => resolveFollowingAfterScroll(
-                  current,
-                  userScrollIntentRef.current,
-                  element
-                ));
-              }}
-            >
-              {visibleRecords.length === 0 ? (
-                <div className="dc-log-empty">{logConnector.loading ? "Connecting to Docker logs…" : "Waiting for log output."}</div>
-              ) : visibleRecords.map((record, index) => {
-                const color = getServiceColor(record.serviceName || record.containerName);
-                return (
-                  <div className="dc-log-row" key={`${record.containerId}-${record.timestamp ?? "untimed"}-${index}`} style={{ borderLeftColor: color }}>
-                    <span className="dc-log-service" style={{ color }} title={record.serviceName || record.containerName}>{record.serviceName || record.containerName}</span>
-                    <span className={`dc-log-message ${record.stream === "stderr" ? "stderr" : ""}`}>
-                      {showTimestamps && record.timestamp ? <span className="dc-log-time">{formatLogTimestamp(record.timestamp)}</span> : null}
-                      {record.text}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-            <footer className="dc-console-status">
-              <span className="dc-live">{logConnector.loading ? "Connecting" : `${loggableContainerIds.length} streams`}</span>
-              <span>{visibleRecords.length.toLocaleString()} lines</span>
-              {logs.missedBatches > 0 ? <span style={{ color: "var(--dc-paused)" }}>{logs.missedBatches} sequence gap(s)</span> : null}
-              {disconnectedCount > 0 ? (
-                <IconButton icon="refresh" label={`Reconnect ${disconnectedCount} disconnected stream${disconnectedCount === 1 ? "" : "s"}`} onClick={() => setStreamRevision((value) => value + 1)} showLabel />
-              ) : null}
-              <span className="dc-status-spacer" />
-              {!following ? <IconButton icon="arrow-down" label="Resume live tail" onClick={scrollToLive} showLabel /> : <span>Following live output</span>}
-            </footer>
-          </main>
+              >
+                {error}
+              </Callout>
+            )}
+            {ready && (
+              <div className="dc-project-actions">
+                <span className="text-text-secondary text-2xs">
+                  Project containers
+                </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  icon="play"
+                  disabled={busy}
+                  onClick={() => requestOperation("start")}
+                >
+                  Start
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost-danger"
+                  icon="square"
+                  disabled={busy}
+                  onClick={() => requestOperation("stop")}
+                >
+                  Stop
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  icon="rotate-cw"
+                  disabled={busy}
+                  onClick={() => requestOperation("restart")}
+                >
+                  Restart
+                </Button>
+              </div>
+            )}
+          </>
+        }
+        statusBar={
+          <StatusBar
+            left={[
+              `${containerIds.length} log streams`,
+              `${visible.length} records`,
+              logs.evictedRecords
+                ? `${logs.evictedRecords} older records evicted`
+                : null,
+              logs.missedBatches ? `${logs.missedBatches} gap(s)` : null,
+            ]}
+            right={
+              Object.keys(disconnected).length ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  onClick={() => void refresh()}
+                >
+                  Reconnect logs
+                </Button>
+              ) : following ? (
+                "Following"
+              ) : (
+                "Paused"
+              )
+            }
+          />
+        }
+      >
+        {!binding ? (
+          <EmptyState
+            title="No worktree binding"
+            description="Open this panel with Containers: Open Console to select a worktree."
+            icon="folder"
+          />
+        ) : !snapshot ? (
+          <div className="dc-empty">
+            <Skeleton label="Loading container project" />
+            <Button size="sm" variant="outline" onClick={() => void refresh()}>
+              Verify and refresh
+            </Button>
+          </div>
+        ) : !containers.length ? (
+          <EmptyState
+            title={
+              ready ? "No matching Compose containers" : "Docker unavailable"
+            }
+            description={
+              ready
+                ? "Start a Compose project for this target, then refresh."
+                : snapshot.connection.error
+            }
+            icon="layers"
+            action={
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void settings.invoke({})}
+              >
+                Docker socket settings
+              </Button>
+            }
+          />
+        ) : (
+          <div className="dc-body">
+            {showServices && (
+              <aside className="dc-services" aria-label="Compose services">
+                <div className="dc-section">
+                  <span>Services</span>
+                  <IconButton
+                    icon="panel-left-close"
+                    aria-label="Hide services"
+                    size="xs"
+                    onClick={() => setShowServices(false)}
+                  />
+                </div>
+                <div className="dc-service-scroll">
+                  <ListRow
+                    title="All services"
+                    subtitle={`${running}/${containers.length} running`}
+                    icon="layers"
+                    selected={!selectedContainerId}
+                    onSelect={() => {
+                      setSelectedContainerId(null);
+                      setFollowing(true);
+                    }}
+                  />
+                  {containers.map((container) => (
+                    <div key={container.id} className="dc-service">
+                      <ListRow
+                        title={container.serviceName || container.name}
+                        subtitle={`${container.name} · ${container.status}`}
+                        selected={selectedContainerId === container.id}
+                        onSelect={() => {
+                          setSelectedContainerId(container.id);
+                          setFollowing(true);
+                        }}
+                        meta={
+                          <Badge
+                            tone={
+                              container.health === "unhealthy"
+                                ? "error"
+                                : container.state === "running"
+                                  ? "neutral"
+                                  : "warning"
+                            }
+                          >
+                            {container.health === "unhealthy"
+                              ? "unhealthy"
+                              : container.state}
+                          </Badge>
+                        }
+                      />
+                      <div className="dc-resource-actions">
+                        {container.state !== "running" &&
+                          container.state !== "paused" && (
+                            <IconButton
+                              icon="play"
+                              aria-label={`Start ${container.serviceName || container.name}`}
+                              size="xs"
+                              disabled={busy || !ready}
+                              onClick={() =>
+                                requestOperation("start", container.id)
+                              }
+                            />
+                          )}
+                        {(container.state === "running" ||
+                          container.state === "paused") && (
+                          <IconButton
+                            icon="square"
+                            aria-label={`Stop ${container.serviceName || container.name}`}
+                            variant="ghost-danger"
+                            size="xs"
+                            disabled={busy || !ready}
+                            onClick={() =>
+                              requestOperation("stop", container.id)
+                            }
+                          />
+                        )}
+                        {container.state === "running" && (
+                          <IconButton
+                            icon="pause"
+                            aria-label={`Pause ${container.serviceName || container.name}`}
+                            size="xs"
+                            disabled={busy || !ready}
+                            onClick={() =>
+                              requestOperation("pause", container.id)
+                            }
+                          />
+                        )}
+                        {container.state === "paused" && (
+                          <IconButton
+                            icon="play"
+                            aria-label={`Resume ${container.serviceName || container.name}`}
+                            size="xs"
+                            disabled={busy || !ready}
+                            onClick={() =>
+                              requestOperation("unpause", container.id)
+                            }
+                          />
+                        )}
+                        <IconButton
+                          icon="rotate-cw"
+                          aria-label={`Restart ${container.serviceName || container.name}`}
+                          size="xs"
+                          disabled={busy || !ready}
+                          onClick={() =>
+                            requestOperation("restart", container.id)
+                          }
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </aside>
+            )}
+            <main className="dc-console">
+              <div className="dc-section dc-console-tools">
+                {!showServices && (
+                  <IconButton
+                    icon="panel-left-open"
+                    aria-label="Show services"
+                    size="xs"
+                    onClick={() => setShowServices(true)}
+                  />
+                )}
+                <strong className="dc-console-title">{title}</strong>
+                <IconButton
+                  icon="clock"
+                  aria-label="Show timestamps"
+                  size="xs"
+                  pressed={showTimestamps}
+                  onClick={() => setShowTimestamps((value) => !value)}
+                />
+                <IconButton
+                  icon={copyConfirmed ? "check" : "copy"}
+                  aria-label={
+                    copyConfirmed ? "Logs copied" : "Copy visible logs"
+                  }
+                  size="xs"
+                  disabled={!visible.length}
+                  loading={copier.loading}
+                  onClick={() => void copy()}
+                />
+                <IconButton
+                  icon="trash"
+                  aria-label="Clear displayed logs"
+                  size="xs"
+                  onClick={() => {
+                    stream.clear();
+                    recentBatches.current = [];
+                    setLogs((current) => {
+                      clearFloor.current = {
+                        epoch: current.epoch,
+                        sequence: current.nextSequence,
+                      };
+                      return {
+                        ...current,
+                        records: [],
+                        bytes: 0,
+                        evictedRecords: 0,
+                      };
+                    });
+                  }}
+                />
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  icon={following ? "pause" : "arrow-down"}
+                  pressed={following}
+                  onClick={() => setFollowing((value) => !value)}
+                >
+                  {following ? "Pause" : "Resume live"}
+                </Button>
+              </div>
+              {!visible.length ? (
+                <div className="dc-log-empty">
+                  {connector.loading
+                    ? "Connecting to Docker logs…"
+                    : "Waiting for log output."}
+                </div>
+              ) : (
+                <div
+                  className="dc-log-content"
+                  ref={logContent}
+                  onScrollCapture={(event) => {
+                    const element = event.target as HTMLElement;
+                    viewport.current = element;
+                    setFollowing((current) =>
+                      resolveFollowingAfterScroll(
+                        current,
+                        intentionalScroll.current,
+                        element,
+                      ),
+                    );
+                  }}
+                  onWheelCapture={armScroll}
+                  onTouchMoveCapture={armScroll}
+                  onPointerDownCapture={armScroll}
+                  onKeyDownCapture={(event) => {
+                    if (
+                      [
+                        "ArrowUp",
+                        "ArrowDown",
+                        "PageUp",
+                        "PageDown",
+                        "Home",
+                        "End",
+                      ].includes(event.key)
+                    )
+                      armScroll();
+                  }}
+                >
+                  <VirtualList
+                    activeIndex={following ? visible.length - 1 : undefined}
+                    aria-label={`${title} logs`}
+                    role="log"
+                    tabIndex={0}
+                    items={visible}
+                    estimatedItemSize={24}
+                    className="dc-log-viewport"
+                    renderItem={(_index, record) => (
+                      <div
+                        className="dc-log-row"
+                        style={{
+                          borderLeftColor: getServiceColor(
+                            record.serviceName || record.containerName,
+                          ),
+                        }}
+                      >
+                        <span
+                          className="dc-log-service"
+                          style={{
+                            color: getServiceColor(
+                              record.serviceName || record.containerName,
+                            ),
+                          }}
+                        >
+                          {record.serviceName || record.containerName}
+                        </span>
+                        <span
+                          className={`dc-log-message ${record.stream === "stderr" ? "stderr" : ""}`}
+                        >
+                          {showTimestamps && record.timestamp && (
+                            <span className="dc-log-time">
+                              {formatLogTimestamp(record.timestamp)}{" "}
+                            </span>
+                          )}
+                          {record.text}
+                        </span>
+                      </div>
+                    )}
+                  />
+                </div>
+              )}
+            </main>
+          </div>
+        )}
+      </PaneLayout>
+      <ConfirmDialog
+        open={!!pending}
+        onClose={() => setPending(null)}
+        title={`${pending?.operation ?? "Update"} ${pending?.label ?? "containers"}`}
+        description="This changes the Docker resources shown below."
+        confirmLabel={`${pending?.operation ?? "Update"} containers`}
+        variant={
+          pending?.operation === "stop" || pending?.operation === "restart"
+            ? "destructive"
+            : "default"
+        }
+        loading={operator.loading || containerOperator.loading}
+        onConfirm={confirmOperation}
+      >
+        <div className="flex flex-col gap-2">
+          <span>{binding?.worktreeName}</span>
+          <code className="text-text-secondary break-all">
+            {pending?.target}
+          </code>
         </div>
-      ) : (
-        <div className="dc-empty-project">
-          <div><strong>No Compose services found</strong>No containers match this Docker project path.</div>
-        </div>
-      )}
+      </ConfirmDialog>
     </div>
   );
 }

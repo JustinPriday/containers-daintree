@@ -1,6 +1,6 @@
 {
   "name": "justinpriday.containers",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Worktree-bound container controls for Docker Engine and Docker Compose in Daintree.",
   "type": "module",
   "private": true,
@@ -25,7 +25,6 @@
   },
   "devDependencies": {
     "@daintreehq/plugin-sdk": "file:../../Daintree/packages/plugin-sdk",
-    "@daintreehq/plugin-testing": "file:../../Daintree/packages/plugin-testing",
     "@daintreehq/plugin-vite": "file:../../Daintree/packages/plugin-vite",
     "@types/dockerode": "^4.0.1",
     "@types/react": "^19.0.0",

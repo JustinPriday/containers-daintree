@@ -1,0 +1,34 @@
+{
+  "guidanceVersion": "2.1.1",
+  "auditDate": "2026-10-05",
+  "daintree": {
+    "version": "0.41.0",
+    "tag": "v0.41.0",
+    "commit": "90032dbe231f0f73d283ebb3655f5dd95d549e92"
+  },
+  "development": {
+    "ref": "org/develop",
+    "commit": "f12266eaef7afdc270c56c15e128104744946001",
+    "features": [
+      "host-ui-kit",
+      "raw-view-sdk-hooks",
+      "panel-header-toolbar",
+      "custom-svg-icons",
+      "bounded-transport",
+      "performance-diagnostics",
+      "bulk-filesystem",
+      "all-project-agent-observation",
+      "terminal-screen-read",
+      "installed-plugin-project-dispatch"
+    ]
+  },
+  "publishedPackages": {
+    "checkedAt": "2026-10-04",
+    "version": "0.1.0",
+    "note": "Published artifacts lag the workspace API. Verify exports and types before adopting newer features."
+  },
+  "pluginUi": {
+    "version": "1.0.0",
+    "source": "src/pluginUi/index.ts"
+  }
+}

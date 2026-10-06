@@ -1,31 +1,39 @@
 {
   "name": "justinpriday.containers",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "displayName": "Containers",
   "description": "Worktree-bound container controls and consoles for Docker Engine and Docker Compose.",
   "tagline": "Docker Engine and Compose controls for every Daintree worktree.",
   "category": "workspace",
   "main": "dist/index.js",
   "engines": {
-    "daintree": ">=0.28.0"
+    "daintree": ">=0.41.0"
   },
-  "capabilities": ["clipboard:write"],
+  "capabilities": ["clipboard:write", "socket:connect"],
   "contributes": {
     "panels": [
       {
         "id": "console",
         "name": "Container Console",
-        "iconId": "terminal",
-        "color": "var(--theme-category-blue)",
-        "showInPalette": false
+        "iconId": "./icons/containers.svg",
+        "color": "var(--theme-category-teal)",
+        "showInPalette": false,
+        "stateVersion": 1,
+        "toolbar": [
+          {
+            "actionId": "justinpriday.containers.refresh",
+            "iconId": "refresh-cw",
+            "label": "Refresh",
+            "status": true
+          }
+        ]
       }
     ],
     "views": [
       {
         "id": "console",
-        "componentPath": "dist/panel-0.6.0.js",
-        "location": "panel",
-        "iconId": "terminal"
+        "componentPath": "dist/panel-0.6.1.js",
+        "location": "panel"
       }
     ],
     "commands": [
@@ -79,7 +87,7 @@
       {
         "id": "open-console",
         "label": "Open Container Console",
-        "iconId": "terminal",
+        "iconId": "./icons/containers.svg",
         "actionId": "justinpriday.containers.open",
         "priority": 3
       }

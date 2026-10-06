@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DockerLogBatch, DockerLogRecord } from "../docker/types.js";
 import {
+  acceptSnapshot,
   appendLogBatch,
   emptyConsoleLogState,
   filterLogRecords,
@@ -10,7 +11,11 @@ import {
   resolveFollowingAfterScroll,
 } from "./logConsole.js";
 
-function record(containerId: string, serviceName: string, text: string): DockerLogRecord {
+function record(
+  containerId: string,
+  serviceName: string,
+  text: string,
+): DockerLogRecord {
   return {
     containerId,
     containerName: `${serviceName}-1`,
@@ -22,7 +27,13 @@ function record(containerId: string, serviceName: string, text: string): DockerL
 }
 
 function batch(sequence: number, records: DockerLogRecord[]): DockerLogBatch {
-  return { containerId: records[0]?.containerId ?? "mixed", sequence, records };
+  return {
+    targetPath: "/project",
+    epoch: "test",
+    containerId: records[0]?.containerId ?? "mixed",
+    sequence,
+    records,
+  };
 }
 
 describe("Docker console log state", () => {
@@ -32,11 +43,15 @@ describe("Docker console log state", () => {
     state = appendLogBatch(
       state,
       batch(1, [record("b", "worker", "two"), record("a", "api", "three")]),
-      3
+      3,
     );
     state = appendLogBatch(state, batch(2, [record("b", "worker", "four")]), 3);
 
-    expect(state.records.map((entry) => entry.text)).toEqual(["two", "three", "four"]);
+    expect(state.records.map((entry) => entry.text)).toEqual([
+      "two",
+      "three",
+      "four",
+    ]);
     expect(state.nextSequence).toBe(3);
     expect(state.missedBatches).toBe(0);
   });
@@ -44,7 +59,7 @@ describe("Docker console log state", () => {
   it("counts sequence gaps across interleaved services", () => {
     let state = appendLogBatch(
       emptyConsoleLogState(),
-      batch(0, [record("a", "api", "first")])
+      batch(0, [record("a", "api", "first")]),
     );
     state = appendLogBatch(state, batch(2, [record("b", "worker", "third")]));
 
@@ -54,7 +69,9 @@ describe("Docker console log state", () => {
   it("filters locally without losing the all-services history", () => {
     const records = [record("a", "api", "one"), record("b", "worker", "two")];
     expect(filterLogRecords(records, null)).toEqual(records);
-    expect(filterLogRecords(records, "b").map((entry) => entry.text)).toEqual(["two"]);
+    expect(filterLogRecords(records, "b").map((entry) => entry.text)).toEqual([
+      "two",
+    ]);
   });
 
   it("recognizes states that can sustain a follow stream", () => {
@@ -70,14 +87,17 @@ describe("Docker console log state", () => {
   });
 
   it("formats the visible console selection for clipboard export", () => {
-    const records = [record("a", "api", "ready"), record("b", "worker", "started")];
+    const records = [
+      record("a", "api", "ready"),
+      record("b", "worker", "started"),
+    ];
     records[0]!.timestamp = "2026-07-21T12:34:56.789Z";
 
     expect(formatLogRecordsForClipboard(records, false)).toBe(
-      "api | ready\nworker | started"
+      "api | ready\nworker | started",
     );
     expect(formatLogRecordsForClipboard(records, true)).toMatch(
-      /^\d{2}:\d{2}:\d{2}\.789 api \| ready\nworker \| started$/
+      /^\d{2}:\d{2}:\d{2}\.789 api \| ready\nworker \| started$/,
     );
   });
 
@@ -85,6 +105,51 @@ describe("Docker console log state", () => {
     const drifted = { scrollHeight: 1_000, scrollTop: 650, clientHeight: 300 };
     expect(resolveFollowingAfterScroll(true, false, drifted)).toBe(true);
     expect(resolveFollowingAfterScroll(true, true, drifted)).toBe(false);
-    expect(resolveFollowingAfterScroll(false, true, { ...drifted, scrollTop: 700 })).toBe(true);
+    expect(
+      resolveFollowingAfterScroll(false, true, { ...drifted, scrollTop: 700 }),
+    ).toBe(true);
   });
+});
+
+describe("Log transport recovery", () => {
+  it("ignores duplicate batches and retired stream epochs", () => {
+    const first = batch(0, [record("a", "api", "old")]);
+    let state = appendLogBatch(emptyConsoleLogState(), first);
+    expect(appendLogBatch(state, first)).toBe(state);
+    state = appendLogBatch(state, {
+      ...first,
+      epoch: "reconnected",
+      records: [record("a", "api", "new")],
+    });
+    expect(appendLogBatch(state, first)).toBe(state);
+    expect(state.records.map((entry) => entry.text)).toEqual(["new"]);
+    expect(state.missedBatches).toBe(1);
+  });
+
+  it("evicts by encoded bytes even when record count is small", () => {
+    const payload = record("a", "api", "😀".repeat(100));
+    const state = appendLogBatch(
+      emptyConsoleLogState(),
+      batch(0, [payload, payload]),
+      5000,
+      700,
+    );
+    expect(state.records).toHaveLength(1);
+    expect(state.bytes).toBeLessThanOrEqual(700);
+    expect(state.evictedRecords).toBe(1);
+  });
+});
+
+it("does not overwrite a newer project snapshot with a late invoke response", () => {
+  const current = { epoch: "worker", revision: 3, value: "new" };
+  expect(
+    acceptSnapshot(current, { epoch: "worker", revision: 2, value: "old" }),
+  ).toBe(current);
+  expect(
+    acceptSnapshot(current, {
+      epoch: "new-worker",
+      revision: 1,
+      value: "restart",
+    }).value,
+  ).toBe("restart");
 });

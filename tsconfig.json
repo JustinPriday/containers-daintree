@@ -10,7 +10,16 @@
     "isolatedModules": true,
     "esModuleInterop": true,
     "jsx": "react-jsx",
-    "types": ["vitest/globals"]
+    "types": [
+      "vitest/globals",
+      "@daintreehq/plugin-sdk/plugin-ui",
+      "@daintreehq/plugin-sdk/view-globals"
+    ]
   },
-  "include": ["src", "vite.config.ts", "vite.config.worker.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "vite.config.worker.ts",
+    "vitest.config.ts"
+  ]
 }

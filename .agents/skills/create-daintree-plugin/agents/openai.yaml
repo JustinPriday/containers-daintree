@@ -1,0 +1,4 @@
+interface:
+  display_name: "Create Daintree Plugin"
+  short_description: "Design, build, test, package, and diagnose Daintree plugins."
+  default_prompt: "Use $create-daintree-plugin to build or update a plugin with the host UI kit, scoped agent APIs, diagnostics, and verified target compatibility."
